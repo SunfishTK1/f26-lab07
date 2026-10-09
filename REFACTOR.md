@@ -151,15 +151,117 @@ one line on why the boundary sits where it does.
 `git diff`, a branch), and the totals line (the shipped count plus your pin,
 all green).
 
+> **The diff is commit `6b8f9d2`** ("Replace conditional with polymorphism in
+> BookingWorkflow"). It sits directly on top of the pin commit `6373954`.
+> To see it, run `git show 6b8f9d2 -- src/` or
+> `git diff 6373954 6b8f9d2 -- src/`:
+>
+> ```text
+>  .../scheduling/workflow/BlockedBookingHandler.java |  73 +++++++
+>  .../scheduling/workflow/BookingTypeHandler.java    |  26 +++
+>  .../cs214/scheduling/workflow/BookingWorkflow.java | 224 ++-------------------
+>  .../workflow/RecurringBookingHandler.java          | 123 +++++++++++
+>  .../scheduling/workflow/RegularBookingHandler.java |  92 +++++++++
+>  5 files changed, 327 insertions(+), 211 deletions(-)
+> ```
+>
+> - `BookingWorkflow` keeps its constructor, the four public methods, and the
+>   shared code that ran before each switch. Each method now ends in one line,
+>   `handlers.get(type).<op>(...)`, over an `EnumMap` built in the constructor.
+> - Each of the 12 former `case` bodies now lives in a package-private
+>   handler class, one per `BookingType`.
+>
+> **Totals** (from `mvn -B test` after the refactor; per class 18 + 1 + 7 + 6 + 4):
+>
+> ```text
+> [INFO] Tests run: 36, Failures: 0, Errors: 0, Skipped: 0
+> [INFO] BUILD SUCCESS
+> ```
+>
+> That is the 35 shipped tests plus the pin, all green, and no test file
+> changed.
+
 **What did NOT change: behavior and files.** The observable behavior you
 checked is still the same, including anything that surprised you while reading.
 Which files outside the scope are untouched, and how you verified that rather
 than assumed it. If the agent reached outside the directive, say where and what
 you did about it.
 
+> **Behavior.**
+> - **Every case body moved unchanged.** The agent claimed this, and I checked
+>   it separately. I wrote my own script that pulls each of the 12 `case`
+>   bodies out of `git show 6373954:.../BookingWorkflow.java` and checks it
+>   appears token for token (ignoring whitespace) in the new handler files.
+>   All 12 match: `submit`, `cancel`, `priceOf` and `describe` for REGULAR,
+>   RECURRING and BLOCKED.
+>   - So every rejection and outcome message is the same, along with every
+>     notification recipient, subject and body.
+>   - The publish order is the same, and so is the `nextSeriesId()` /
+>     `nextBookingId()` call order.
+> - **The surprise from reading is still there**, and the pin still guards it.
+>   RECURRING's `<=` overlap check (now `RecurringBookingHandler.java:61-62`)
+>   is unchanged. The REGULAR (`RegularBookingHandler.java:43-44`) and BLOCKED
+>   (`BlockedBookingHandler.java:34-35`) checks stay strict `<`. When I
+>   repeated the mutation (`<=` to `<`) on the *refactored* code in a scratch
+>   copy, the pin went red and nothing else did, so it still guards the moved
+>   code.
+> - **The shared code before each switch is identical**, as I confirmed by
+>   reading the diff:
+>   - the null-request check;
+>   - the unknown-room rejection;
+>   - "missing or already cancelled → `false`" in `cancel`;
+>   - the unknown-booking `IllegalArgumentException` in `priceOf`;
+>   - the "Unknown booking #" text in `describe`;
+>   - the `roomName` fallback.
+> - **Other surprises carried over unchanged.** These aren't pinned, but they
+>   come through as part of the token-identical move:
+>   - RECURRING `cancel` releases the chosen occurrence *and every later one*.
+>   - RECURRING `priceOf` prices the whole live series, earlier weeks
+>     included.
+>   - RECURRING `submit` never checks whether the member is already booked
+>     elsewhere (REGULAR does).
+>
+> **Files.**
+> - `git diff --stat 6373954 6b8f9d2 -- src/test pom.xml .github` is empty.
+> - `git diff --name-only 6373954 6b8f9d2` lists only the five `workflow/`
+>   files above plus `REFACTOR.md`, which I edited (the directive section),
+>   not the agent.
+> - So `domain/`, `notify/`, `pricing/`, `reporting/` and every test are
+>   byte-identical. A grep of `workflow/` finds no `switch` or `case`, and no
+>   conditional on `BookingType`.
+> - The agent did not reach outside the directive.
+
 **One thing the agent changed that you had to look at twice.** Something you
 checked line by line before accepting. If there was nothing, say how carefully
 you read the diff.
+
+> **The dropped `default:` branches.** The original returned a fallback for an
+> unknown type in each method:
+>
+> | Method | Original fallback |
+> |---|---|
+> | `submit` | `"unsupported booking type X"` |
+> | `cancel` | `false` |
+> | `priceOf` | `0.0` |
+> | `describe` | `"Booking #id in room"` |
+>
+> Now `handlers.get(type)` would return `null` for an unknown type and throw a
+> `NullPointerException`. I accepted it after checking it is unreachable
+> today:
+> - `BookingType` has exactly three constants, all registered in the
+>   constructor.
+> - `BookingRequest` and `Booking` both reject a null type in their
+>   constructors.
+>
+> So no input can observe the difference. It is still a changed *failure
+> mode*: whoever adds a fourth type must register a handler or get an NPE
+> instead of a polite rejection.
+>
+> The other line I read twice is a smaller, structural one.
+> `FACILITIES_CONTACT` and `recipientFor` went from `private` to
+> package-private so the handlers can static-import them. The workflow and
+> its handlers now depend on each other. That is acceptable inside one
+> package, and nothing outside `workflow/` can see either.
 
 ### The closing explanation
 
@@ -167,7 +269,49 @@ you read the diff.
 would have been the better call, using the lecture's four questions (test
 coverage, code age, spec quality, and reach). Be concrete about this codebase.
 
+> **Refactoring was the better call.** Three of the four questions point that
+> way, and the one that doesn't points only weakly.
+>
+> - **Test coverage: refactor.** The 35 shipped tests are green, but they pin
+>   the happy path of each `case` and almost none of its edge decisions:
+>   - which weeks a series skips;
+>   - occurrence numbering after a skip;
+>   - the forward-cascading recurring cancel;
+>   - recurring not checking member double-booking;
+>   - the touching-boundary rule.
+>
+>   The mutation experiment proves it: a real behavior change left all 35
+>   green. A regeneration remakes every one of those decisions, and the suite
+>   would wave most of the differences through. The refactor, by contrast,
+>   could be checked completely: 12 bodies, token-identical, plus a green
+>   suite.
+> - **Code age: weakly regenerate.** The code is young and agent-generated,
+>   one commit with no bug-fix history, so a regeneration loses no hard-won
+>   fixes. The catch is that it would also lose the quirks above. With no
+>   history, nobody can say which of them are intended. Age makes
+>   regeneration *cheap*, not *safe*.
+> - **Spec quality: refactor.** There is no spec beyond the README's one
+>   paragraph and some javadoc, and the javadoc contradicts the code: `TimeSlot`
+>   says the end is exclusive, while RECURRING treats it as inclusive. The
+>   code is the only complete spec. Regenerating from a description would
+>   swap the code's answers for the generator's guesses.
+> - **Reach: refactor.** `BookingWorkflow` is the front door. Every store
+>   write and every notification goes through it (its own javadoc says so).
+>   `ReportService` reports on the bookings it writes, and callers consume
+>   its outcome messages, `getSkipped()`, and the exact outbox text
+>   (`NotificationHubTest.aConfirmationFromTheWorkflowReachesTheOutbox`
+>   asserts a full rendered string). High reach means more callers can see
+>   anything a regeneration changes.
+
 **What would flip your answer.** A condition about the artifact, not a feeling.
+
+> I would regenerate if `BookingWorkflow` had a test suite that pins each of
+> the 12 type × method behaviors, including the edge decisions listed above,
+> such that mutating any one of them turns a test red. Or, as an
+> alternative, a written spec that rules on the open questions (touching
+> boundary, cascade on cancel, recurring member double-booking). With that,
+> a regenerated class could be judged as rigorously as this refactor was.
+> Without it, regenerating means accepting changes nobody can see.
 
 ---
 
