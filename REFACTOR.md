@@ -86,6 +86,65 @@ in the handout) and paste the directive you gave the agent, including the scope
 you set, meaning which files and packages were in bounds, which were not, and
 one line on why the boundary sits where it does.
 
+> **Refactor:** Replace Conditional with Polymorphism. The directive below went
+> to a separate Claude Code sub-agent, word for word, after the pin commit
+> (`6373954`). The only addition was a first line giving the repo path.
+>
+> ```text
+> **Refactor: Replace Conditional with Polymorphism in `BookingWorkflow`.**
+>
+> `BookingWorkflow.submit`, `cancel`, `priceOf` and `describe` each switch on
+> `BookingType`. Remove all four switches.
+> - Introduce a package-private interface `BookingTypeHandler` in
+>   `edu.cmu.cs214.scheduling.workflow` with one method per switch:
+>   `submit(BookingRequest, Room)`,
+>   `cancel(Booking, String roomName, boolean adminOverride)`,
+>   `price(Booking)` and `describe(Booking, String roomName)`.
+> - Add three package-private implementations, `RegularBookingHandler`,
+>   `RecurringBookingHandler` and `BlockedBookingHandler`. Each takes the
+>   collaborators it needs (store, calculator, hub) in its constructor.
+> - `BookingWorkflow` keeps the code that runs before each switch (null
+>   checks, room and booking lookups, the early returns and the `roomName`
+>   fallback). It builds an `EnumMap<BookingType, BookingTypeHandler>` once in
+>   its constructor and delegates to it.
+> - The `default:` branches are unreachable, because the enum has exactly
+>   three constants and both `BookingRequest` and `Booking` reject a null type.
+>   Drop them, and say so in your summary.
+>
+> **Scope.**
+> - In bounds: only `src/main/java/edu/cmu/cs214/scheduling/workflow/`. Edit
+>   `BookingWorkflow.java` and add new files in that package.
+> - Out of bounds: `domain/`, `notify/`, `pricing/`, `reporting/`, everything
+>   under `src/test/`, `pom.xml`, `.github/`, and all `.md` files. Do not edit
+>   them.
+>
+> **This is a behavior-preserving refactor. Hard constraints:**
+> 1. `BookingWorkflow`'s public constructor and four public method signatures
+>    stay exactly as they are.
+> 2. Move each `case` body as is. Do not deduplicate across types. In
+>    particular, keep all three overlap checks separate and exactly as
+>    written, including RECURRING's `<=` comparisons. That inconsistency is
+>    deliberate here and is pinned by a test.
+> 3. Every observable output stays byte-for-byte identical: rejection
+>    messages, outcome messages, notification recipients, subjects and bodies,
+>    notification order, and the order of `store.nextBookingId()` and
+>    `store.nextSeriesId()` calls.
+> 4. No `switch`, `if` or ternary on `BookingType` may remain anywhere in the
+>    `workflow` package.
+> 5. Do not edit or add tests. Do not commit.
+>
+> **When done:** run `mvn -B test` from the repo root (it must report
+> `Tests run: 36, Failures: 0`). Report the totals line, every file you
+> changed or added, and anything you were tempted to change but didn't.
+> ```
+>
+> **Why the boundary sits there.** Every test (including `ReportServiceTest`
+> and `NotificationHubTest`) uses `BookingWorkflow` only through its public
+> constructor and four methods. Freezing that API and the tests lets the
+> unchanged suite, plus my pin, judge the refactor. `domain/` is shared with
+> `reporting/`, and `notify/` and `pricing/` are the subjects of Milestones 2
+> and 3, so they stay as shipped.
+
 ### The result
 
 **The diff and the suite.** How you are showing the diff to the TA (a commit,
