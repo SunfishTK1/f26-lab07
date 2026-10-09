@@ -551,4 +551,24 @@ Read `pricing/`. Not coded, one sentence.
 **The pattern.** Which one fits `PriceCalculator`, and the problem that makes
 it fit. Name the problem.
 
+> **Decorator** fits `PriceCalculator`. The problem is that a price is a base
+> hourly rate passed through an ordered sequence of independent, published
+> adjustments: weekend surcharge, then long-booking discount, then tier
+> discount (`PriceCalculator.java:28-43`). The set and order of those rules is
+> what changes when the business changes, so each rule could be its own
+> wrapper around the price beneath it, composed in order, instead of another
+> `if` added to `price()`.
+
 **Would you apply it today?** Yes or no, one line, with the reason.
+
+> **No.** There are four fixed rules in a 20-line method, each pinned by
+> `PriceCalculatorTest` (all together by `everyRuleAppliesInOrder`), and no
+> requirement varies them by room, date, or promotion. Applying it now would
+> be the same speculative generality as `notify/`. I would apply it when a
+> rule has to vary, for example promo codes, per-room rates, or an itemized
+> receipt.
+>
+> (The "order" isn't even live yet. All four rules are percentage multipliers
+> and rounding happens once at the end, so any order gives the same 114.75.
+> Order starts to matter only when a non-percentage rule arrives, such as a
+> flat fee or a cap.)

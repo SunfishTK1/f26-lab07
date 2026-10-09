@@ -21,6 +21,9 @@ Main code under `src/main/java/edu/cmu/cs214/scheduling/`:
 - `workflow/`
   - `BookingWorkflow.java`: submit, cancel, price, and describe a booking. Every
     write to the store and every notification goes through this class.
+  - `BookingTypeHandler.java` and `Regular`/`Recurring`/`BlockedBookingHandler.java`:
+    the type-specific half of each of those four operations, one class per
+    `BookingType` (see `REFACTOR.md`, milestone 1).
 - `notify/`
   - `NotifierFactory.java`, `NotificationStrategy.java` and its implementation:
     how a message gets turned into text.
@@ -49,3 +52,9 @@ From this directory. `SETUP.md` says what green looks like.
 - CI: `.github/workflows/ci.yml`, same command as above
 
 See the Lab 7 handout on the course page for the three milestones you show a TA.
+
+## Tools used
+
+Claude Code (CLI) with Claude Opus 5.5 (`claude-opus-5-5`). The milestone 1
+refactor was performed by a Claude Code sub-agent on the same model, from the
+directive recorded in `REFACTOR.md`.
