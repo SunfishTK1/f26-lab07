@@ -18,15 +18,66 @@ observable result it pins. Not "recurring bookings work". Green against the
 shipped code, and you did not edit or delete an existing test method to get
 there.
 
+> `src/test/java/edu/cmu/cs214/scheduling/workflow/BookingWorkflowCharacterizationTest.java`,
+> test `recurringSubmitSkipsAWeekThatOnlyTouchesAnExistingBooking`.
+>
+> It pins that `BookingWorkflow.submit` on a RECURRING request treats a week
+> whose slot only *touches* an existing booking (the existing one ends at 9:00,
+> the occurrence starts at 9:00) as taken. That week shows up in
+> `getSkipped()`. The other weeks are still booked with their original
+> occurrence numbers (1 and 3, not renumbered to 1 and 2). The outcome is
+> accepted, its message is `"series S-1: 2 booked, 1 skipped"`, and the outbox
+> gets one notification per booked occurrence and none for the skipped week.
+>
+> It's a new class, so no existing test method was edited or deleted. Against
+> the shipped code it is green: `Tests run: 36, Failures: 0, Errors: 0, Skipped: 0`.
+
 **Why that one, and does a shipped test already cover it?** Of everything
 `BookingWorkflow` does, why is this the behavior worth a test? If something
 shipped comes close, say what your pin adds. If nothing does, say how you
 checked.
 
+> `submit` checks overlap in three near-copies, and they disagree. REGULAR
+> (`BookingWorkflow.java:68-69`) and BLOCKED (`:152-153`) use strict `<`, so
+> back-to-back slots are allowed. RECURRING (`:121-122`) uses `<=`, so
+> back-to-back weeks are skipped. That contradicts `TimeSlot`'s javadoc
+> ("inclusive start and an exclusive end"), and is probably a latent bug. A
+> characterization test still pins what the code *does*. Fixing it would be a
+> separate, deliberate behavior change, not part of a refactor.
+>
+> This is the behavior worth pinning because it's the one this refactor is
+> most likely to break. Anyone (or any agent) that removes the type switch sees
+> three copies of the same overlap loop and folds them into one `overlaps()`
+> helper, and the natural helper uses `<`.
+>
+> **Coverage check.** The closest shipped test is
+> `BookingWorkflowTest.regularSubmitAcceptsASlotThatStartsWhenAnotherEnds`,
+> which pins the boundary for REGULAR only. My pin adds the RECURRING side, so
+> together they pin the asymmetry. I confirmed nothing shipped covers it in two
+> ways:
+> 1. By grep. All four shipped `BookingRequest.recurring(...)` calls
+>    (`BookingWorkflowTest.java:106, 149, 181, 209`) submit into an empty
+>    C-200, so no series ever conflicts. No shipped test reads `getSkipped()`,
+>    `getOccurrenceIndex()`, or `getMessage()`.
+> 2. By mutation. In a scratch copy I changed `<=` to `<` at lines 121-122. All
+>    35 shipped tests stayed green, and only the pin failed
+>    (`expected: <[2026-10-12T09:00 to 2026-10-12T10:00]> but was: <[]>`).
+
 **What a regeneration would do differently here.** Suppose someone
 threw this class away and regenerated it from a one-line description of what a
 booking workflow does. Name the decision that would be made a second time, and
 say which way it would probably go.
+
+> The decision made a second time is **"does a slot that starts exactly when
+> another ends conflict with it?"**, and whether that answer is the same for
+> every booking type. A regeneration from "submit, cancel, price and describe
+> room bookings" would make that decision once. It would almost certainly go
+> half-open everywhere (`a.start < b.end && b.start < a.end`). That matches
+> `TimeSlot`'s javadoc and the REGULAR test it would have to keep passing. So a
+> regenerated workflow would start *booking* back-to-back weekly occurrences
+> that the shipped code skips. Every caller that reads `getSkipped()` or the
+> "N booked, M skipped" message would see different results, and only this
+> pin would notice.
 
 ### The directive
 
